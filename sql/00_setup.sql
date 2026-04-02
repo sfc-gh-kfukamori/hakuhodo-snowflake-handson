@@ -20,7 +20,7 @@ USE ROLE SYSADMIN;
 -- Snowflake のウェアハウスはコンピュートリソースです。
 -- サイズを変更することで処理能力をスケールできます。
 -- AUTO_SUSPEND=60 で1分間アイドル後に自動停止し、コストを抑えます。
-CREATE WAREHOUSE IF NOT EXISTS HAKUHODO_HANDSON_WH
+CREATE OR REPLACE WAREHOUSE HAKUHODO_HANDSON_WH
     WAREHOUSE_SIZE = 'X-SMALL'
     AUTO_SUSPEND = 60
     AUTO_RESUME = TRUE
@@ -30,10 +30,10 @@ CREATE WAREHOUSE IF NOT EXISTS HAKUHODO_HANDSON_WH
 -- ============================================================================
 -- Step 0-3: データベースとスキーマの作成
 -- ============================================================================
-CREATE DATABASE IF NOT EXISTS HAKUHODO_HANDSON_DB
+CREATE OR REPLACE DATABASE HAKUHODO_HANDSON_DB
     COMMENT = '博報堂ハンズオン用データベース';
 
-CREATE SCHEMA IF NOT EXISTS HAKUHODO_HANDSON_DB.HAKUHODO_HANDSON_SCHEMA
+CREATE OR REPLACE SCHEMA HAKUHODO_HANDSON_DB.HAKUHODO_HANDSON_SCHEMA
     COMMENT = '博報堂ハンズオン用スキーマ';
 
 -- 以降の操作で使用するコンテキストを設定
@@ -44,10 +44,10 @@ USE WAREHOUSE HAKUHODO_HANDSON_WH;
 -- ============================================================================
 -- Step 0-4: Streamlit / Dynamic Table 用の追加スキーマ（後のセクションで使用）
 -- ============================================================================
-CREATE SCHEMA IF NOT EXISTS HAKUHODO_HANDSON_DB.ANALYTICS
+CREATE OR REPLACE SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS
     COMMENT = '加工済みデータ用スキーマ';
 
-CREATE SCHEMA IF NOT EXISTS HAKUHODO_HANDSON_DB.STREAMLIT
+CREATE OR REPLACE SCHEMA HAKUHODO_HANDSON_DB.STREAMLIT
     COMMENT = 'Streamlit アプリ用スキーマ';
 
 -- ============================================================================

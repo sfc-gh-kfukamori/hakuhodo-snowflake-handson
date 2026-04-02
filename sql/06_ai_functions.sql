@@ -279,7 +279,7 @@ FROM report;
 -- --------------------------------------------------------------------------
 
 CREATE OR REPLACE DYNAMIC TABLE DT_MONTHLY_AI_REPORT
-    TARGET_LAG = '1 DAY'
+    TARGET_LAG = '2 MINUTES'
     WAREHOUSE = HAKUHODO_HANDSON_WH
     AS
     SELECT

@@ -99,7 +99,7 @@ LIST @HAKUHODO_HANDSON_REPO/branches/main/semantic_model/;
 -- ★ GCS外部ステージの代替として、Git上のCSVファイルから直接ロード可能です。
 
 -- ファイルフォーマットの作成（01_external_stage_and_load.sql と同じもの）
-CREATE FILE FORMAT IF NOT EXISTS CSV_FORMAT_JP
+CREATE OR REPLACE FILE FORMAT CSV_FORMAT_JP
     TYPE = 'CSV'
     FIELD_DELIMITER = ','
     RECORD_DELIMITER = '\n'

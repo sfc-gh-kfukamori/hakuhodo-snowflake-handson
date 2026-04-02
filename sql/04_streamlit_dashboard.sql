@@ -34,7 +34,7 @@ CREATE OR REPLACE STREAMLIT HAKUHODO_HANDSON_DB.STREAMLIT.HAKUHODO_DASHBOARD
 -- ============================================================================
 -- Streamlit アプリのソースコードを格納するステージを作成します。
 
-CREATE STAGE IF NOT EXISTS HAKUHODO_HANDSON_DB.STREAMLIT.STREAMLIT_STAGE
+CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.STREAMLIT.STREAMLIT_STAGE
     COMMENT = 'Streamlit アプリ用ステージ';
 
 -- ============================================================================

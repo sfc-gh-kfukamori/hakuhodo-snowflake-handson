@@ -27,7 +27,7 @@ USE WAREHOUSE HAKUHODO_HANDSON_WH;
 -- ============================================================================
 -- Semantic Model の YAML ファイルを格納するステージを作成します。
 
-CREATE STAGE IF NOT EXISTS HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE
+CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE
     COMMENT = 'Semantic Model YAML格納用ステージ';
 
 -- ============================================================================
