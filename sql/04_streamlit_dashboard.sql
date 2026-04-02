@@ -18,24 +18,24 @@ USE SCHEMA STREAMLIT;
 USE WAREHOUSE HAKUHODO_HANDSON_WH;
 
 -- ============================================================================
--- Step 4-1: Streamlit アプリの作成
+-- Step 4-1: ステージの作成
+-- ============================================================================
+-- Streamlit アプリのソースコードを格納するステージを先に作成します。
+-- ★ ステージが存在しないと CREATE STREAMLIT がエラーになるため、必ず先に作成。
+
+CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.STREAMLIT.STREAMLIT_STAGE
+    COMMENT = 'Streamlit アプリ用ステージ';
+
+-- ============================================================================
+-- Step 4-2: Streamlit アプリの作成
 -- ============================================================================
 -- CREATE STREAMLIT コマンドでアプリを定義します。
--- MAIN_FILE にはアプリの Python コードをインラインで記述します。
 
 CREATE OR REPLACE STREAMLIT HAKUHODO_HANDSON_DB.STREAMLIT.HAKUHODO_DASHBOARD
     ROOT_LOCATION = '@HAKUHODO_HANDSON_DB.STREAMLIT.STREAMLIT_STAGE'
     MAIN_FILE = 'hakuhodo_dashboard.py'
     QUERY_WAREHOUSE = HAKUHODO_HANDSON_WH
     COMMENT = '博報堂ハンズオン ダッシュボード（AI問い合わせ機能付き）';
-
--- ============================================================================
--- Step 4-2: ステージとアプリファイルの準備
--- ============================================================================
--- Streamlit アプリのソースコードを格納するステージを作成します。
-
-CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.STREAMLIT.STREAMLIT_STAGE
-    COMMENT = 'Streamlit アプリ用ステージ';
 
 -- ============================================================================
 -- Step 4-3: Streamlit アプリのソースコード
