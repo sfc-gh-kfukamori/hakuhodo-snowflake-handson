@@ -13,6 +13,15 @@
 --   Task と組み合わせることで「データが来たら自動処理」を実現します。
 -- ============================================================================
 
+-- ============================================================================
+-- Step 2-0: EXECUTE TASK 権限の付与
+-- ============================================================================
+-- Task を手動実行（EXECUTE TASK）するには、ロールに対して
+-- EXECUTE TASK 権限が必要です。ACCOUNTADMIN で付与します。
+
+USE ROLE ACCOUNTADMIN;
+GRANT EXECUTE TASK ON ACCOUNT TO ROLE SYSADMIN;
+
 USE ROLE SYSADMIN;
 USE DATABASE HAKUHODO_HANDSON_DB;
 USE SCHEMA HAKUHODO_HANDSON_SCHEMA;
