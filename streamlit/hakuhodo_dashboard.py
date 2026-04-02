@@ -10,9 +10,16 @@ session = get_active_session()
 # --------------------------------------------------
 # ページ設定
 # --------------------------------------------------
-st.set_page_config(page_title="博報堂 データダッシュボード", layout="wide")
 st.title("博報堂 データダッシュボード")
 st.caption("Snowflake ハンズオン — Streamlit in Snowflake + Cortex AI")
+
+
+def safe_number(val, default=0):
+    """NaN/None を安全にデフォルト値に変換"""
+    if pd.isna(val) or val is None:
+        return default
+    return float(val)
+
 
 # --------------------------------------------------
 # タブ構成
@@ -80,11 +87,11 @@ with tab1:
     # --- KPI カード ---
     kpi_query = f'''
         SELECT
-            SUM("仕入高合計") AS total_purchase,
-            SUM("媒体収益合計") AS total_revenue,
-            SUM("媒体収益予算合計") AS total_budget,
-            SUM("FC営収合計") AS total_fc,
-            SUM("取引件数") AS total_deals
+            SUM("仕入高合計") AS TOTAL_PURCHASE,
+            SUM("媒体収益合計") AS TOTAL_REVENUE,
+            SUM("媒体収益予算合計") AS TOTAL_BUDGET,
+            SUM("FC営収合計") AS TOTAL_FC,
+            SUM("取引件数") AS TOTAL_DEALS
         FROM HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
         WHERE "年月" IN ({ym_list})
           AND (AGENCY_KEY IN ({agency_list}) OR AGENCY_KEY IS NULL)
@@ -94,18 +101,18 @@ with tab1:
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        val = kpi_df["TOTAL_PURCHASE"].iloc[0] or 0
+        val = safe_number(kpi_df["TOTAL_PURCHASE"].iloc[0])
         st.metric("仕入高合計", f"¥{val:,.0f}")
     with col2:
-        val = kpi_df["TOTAL_REVENUE"].iloc[0] or 0
+        val = safe_number(kpi_df["TOTAL_REVENUE"].iloc[0])
         st.metric("媒体収益合計", f"¥{val:,.0f}")
     with col3:
-        budget = kpi_df["TOTAL_BUDGET"].iloc[0] or 0
-        revenue = kpi_df["TOTAL_REVENUE"].iloc[0] or 0
+        budget = safe_number(kpi_df["TOTAL_BUDGET"].iloc[0])
+        revenue = safe_number(kpi_df["TOTAL_REVENUE"].iloc[0])
         rate = (revenue / budget * 100) if budget else 0
         st.metric("予実達成率", f"{rate:.1f}%")
     with col4:
-        val = kpi_df["TOTAL_DEALS"].iloc[0] or 0
+        val = safe_number(kpi_df["TOTAL_DEALS"].iloc[0])
         st.metric("取引件数", f"{val:,.0f}")
 
     st.divider()
@@ -116,7 +123,7 @@ with tab1:
     with col_c1:
         st.subheader("月別 仕入高推移")
         monthly_query = f'''
-            SELECT "年月",
+            SELECT "年月"::VARCHAR AS "年月",
                    SUM("仕入高合計") AS "仕入高",
                    SUM("媒体収益合計") AS "媒体収益"
             FROM HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
@@ -126,8 +133,8 @@ with tab1:
             ORDER BY "年月"
         '''
         monthly_df = session.sql(monthly_query).to_pandas()
-        monthly_df["年月"] = monthly_df["年月"].astype(str)
-        st.bar_chart(monthly_df.set_index("年月"))
+        if not monthly_df.empty:
+            st.bar_chart(monthly_df.set_index("年月"))
 
     with col_c2:
         st.subheader("媒体種類別 仕入高構成")
@@ -143,7 +150,8 @@ with tab1:
             LIMIT 10
         '''
         media_type_df = session.sql(media_type_query).to_pandas()
-        st.bar_chart(media_type_df.set_index("媒体種類名"))
+        if not media_type_df.empty:
+            st.bar_chart(media_type_df.set_index("媒体種類名"))
 
     # --- 詳細テーブル ---
     st.subheader("詳細データ")
@@ -213,13 +221,14 @@ with tab2:
         LIMIT 15
     '''
     pv_df = session.sql(pv_query).to_pandas()
-    st.bar_chart(pv_df.set_index("管理項目名称"))
+    if not pv_df.empty:
+        st.bar_chart(pv_df.set_index("管理項目名称"))
 
     # --- 月次推移 ---
     st.subheader("月次 予実推移")
     monthly_pv_query = f'''
         SELECT
-            "年月",
+            "年月"::VARCHAR AS "年月",
             SUM("実績合計") AS "実績",
             SUM("予算合計") AS "予算",
             SUM("予実差異") AS "差異"
@@ -230,8 +239,8 @@ with tab2:
         ORDER BY "年月"
     '''
     monthly_pv_df = session.sql(monthly_pv_query).to_pandas()
-    monthly_pv_df["年月"] = monthly_pv_df["年月"].astype(str)
-    st.line_chart(monthly_pv_df.set_index("年月")[["実績", "予算"]])
+    if not monthly_pv_df.empty:
+        st.line_chart(monthly_pv_df.set_index("年月")[["実績", "予算"]])
 
     # --- 詳細テーブル ---
     st.subheader("詳細データ")
@@ -268,34 +277,35 @@ with tab3:
             with st.spinner("AI が分析中です..."):
 
                 # テーブル情報をコンテキストとして渡す
-                context_prompt = f"""
-あなたはSnowflakeのデータアナリストです。以下のテーブル情報を元に、ユーザーの質問に日本語で回答してください。
+                context_prompt = (
+                    "あなたはSnowflakeのデータアナリストです。以下のテーブル情報を元に、"
+                    "ユーザーの質問に日本語で回答してください。\n\n"
+                    "## 利用可能テーブル\n\n"
+                    "### HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY\n"
+                    "月次仕入集計データ。カラム: 年度_4月起点, 年月, 四半期_4月起点, "
+                    "会社_営業_名_最新, 広告主業種_大名, マスメディア区分名, 媒体種類名, "
+                    "AGENCY_KEY(H:博報堂/D:大広/Y:読広), 取引件数, 仕入高合計, "
+                    "媒体収益合計, 媒体収益予算合計, 媒体収益予実差異, FC営収合計, スタッフコスト合計\n\n"
+                    "### HAKUHODO_HANDSON_DB.ANALYTICS.DT_SPECIAL_FEE_SUMMARY\n"
+                    "組織損益集計データ。カラム: 年度, 年月, 四半期, 会社, 部門G, 部門, "
+                    "管理項目名称, 実績合計, 予算合計, 予実差異, 予実達成率\n\n"
+                    "## ユーザーの質問\n"
+                    f"{user_question}\n\n"
+                    "質問に対する分析結果を簡潔に日本語で回答してください。"
+                    "必要であればSQLクエリも提示してください。"
+                )
 
-## 利用可能テーブル
-
-### HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
-月次仕入集計データ。カラム: 年度_4月起点, 年月, 四半期_4月起点, 会社_営業_名_最新, 広告主業種_大名, マスメディア区分名, 媒体種類名, AGENCY_KEY(H:博報堂/D:大広/Y:読広), 取引件数, 仕入高合計, 媒体収益合計, 媒体収益予算合計, 媒体収益予実差異, FC営収合計, スタッフコスト合計
-
-### HAKUHODO_HANDSON_DB.ANALYTICS.DT_SPECIAL_FEE_SUMMARY
-組織損益集計データ。カラム: 年度, 年月, 四半期, 会社, 部門G, 部門, 管理項目名称, 実績合計, 予算合計, 予実差異, 予実達成率
-
-## ユーザーの質問
-{user_question}
-
-質問に対する分析結果を簡潔に日本語で回答してください。必要であればSQLクエリも提示してください。
-"""
+                # シングルクォートをエスケープ
+                escaped_prompt = context_prompt.replace("\\", "\\\\").replace("'", "''")
 
                 # Cortex COMPLETE で回答を生成
-                response_df = session.sql(f"""
-                    SELECT SNOWFLAKE.CORTEX.COMPLETE(
-                        'claude-3-5-sonnet',
-                        '{context_prompt.replace("'", "''")}'
-                    ) AS response
-                """).to_pandas()
+                response_df = session.sql(
+                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '{escaped_prompt}') AS RESPONSE"
+                ).to_pandas()
 
                 answer = response_df["RESPONSE"].iloc[0]
                 st.markdown("### 回答")
-                st.markdown(answer)
+                st.markdown(str(answer))
 
                 # 関連データのプレビューを表示
                 st.divider()
