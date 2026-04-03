@@ -528,7 +528,7 @@ SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
 
 CREATE OR REPLACE AGENT HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
   COMMENT = '博報堂DYグループ向けAIアシスタント。構造化データの分析（Cortex Analyst）と社内ナレッジ検索（Cortex Search）を統合。'
-  FROM SPECIFICATION $spec$
+  FROM SPECIFICATION $$
 {
   "models": {
     "orchestration": "claude-4-sonnet"
@@ -562,7 +562,7 @@ CREATE OR REPLACE AGENT HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
     "response": "常に日本語で回答してください。数値を含む回答では具体的な数字を明示し、金額は読みやすい単位（万円、億円）で表示してください。根拠となるデータソース（テーブル名またはドキュメント名）を明記してください。不明な場合は推測せず、該当するデータが見つかりませんと回答してください。"
   }
 }
-$spec$;
+$$;
 
 -- Agent が作成されたことを確認
 SHOW AGENTS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
