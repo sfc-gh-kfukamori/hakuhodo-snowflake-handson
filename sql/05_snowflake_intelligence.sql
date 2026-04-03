@@ -303,5 +303,262 @@ DESCRIBE SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW;
 --   - SEMANTIC_VIEW() 関数で直接クエリ可能（通常の SQL としても利用可能）
 --   - 非エンジニアでも自然言語でデータ分析を開始できる
 -- ============================================================================
+-- 次のステップ: Cortex Search + Snowflake Intelligence の構築に進みます
+-- ============================================================================
+
+
+-- ============================================================================
+-- Step 5-6: ナレッジドキュメント用ステージとテーブルの作成
+-- ============================================================================
+-- ★ Cortex Search で社内ナレッジを検索可能にするため、以下を構築します:
+--   1. PDFファイルをアップロードするステージ
+--   2. AI_PARSE_DOCUMENT でPDFをパース → テキスト抽出
+--   3. チャンクテーブルに格納
+--   4. Cortex Search Service を作成
+-- ============================================================================
+
+-- PDFアップロード用の内部ステージを作成
+CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE
+  DIRECTORY = (ENABLE = TRUE)
+  COMMENT = 'ナレッジドキュメント（PDF）格納用ステージ';
+
+-- ★ ここでPDFファイルをアップロードします:
+--   SnowSQL または Snowsight からアップロード:
+--
+--   【方法1: SnowSQL（コマンドライン）】
+--   PUT file:///path/to/knowledge_docs/*.pdf
+--     @HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE
+--     AUTO_COMPRESS = FALSE;
+--
+--   【方法2: Snowsight（GUI）】
+--   1. Snowsight → Data → Databases → HAKUHODO_HANDSON_DB → ANALYTICS → Stages
+--   2. KNOWLEDGE_DOCS_STAGE を選択
+--   3. 「+ Files」ボタンでPDFをアップロード
+--
+--   アップロード後、以下で確認:
+LIST @HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE;
+
+-- ディレクトリテーブルをリフレッシュ（アップロード後に実行）
+ALTER STAGE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE REFRESH;
+
+-- ============================================================================
+-- Step 5-7: AI_PARSE_DOCUMENT でPDFをパースしチャンクテーブルに格納
+-- ============================================================================
+-- ★ AI_PARSE_DOCUMENT は Snowflake Cortex の関数で、PDF/画像からテキストを抽出します。
+--   - mode='LAYOUT': レイアウト（表・見出し等）を保持してMarkdown形式で抽出
+--   - page_split=true: ページごとに分割して抽出
+--
+-- ★ パースしたテキストをチャンクテーブルに格納し、Cortex Search で検索可能にします。
+-- ============================================================================
+
+-- パース結果を格納するテーブル
+CREATE OR REPLACE TABLE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS (
+    chunk_id        NUMBER AUTOINCREMENT,
+    doc_filename    VARCHAR,
+    doc_title       VARCHAR,
+    page_index      NUMBER,
+    chunk_text      VARCHAR,
+    created_at      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- PDFをパースしてチャンクテーブルに挿入
+-- ★ 各PDFをページ単位でパースし、テキストをチャンクとして格納します
+INSERT INTO HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
+    (doc_filename, doc_title, page_index, chunk_text)
+SELECT
+    relative_path AS doc_filename,
+    -- ファイル名から拡張子を除去してドキュメントタイトルとする
+    REGEXP_REPLACE(
+        REGEXP_REPLACE(relative_path, '^[0-9]+_', ''),
+        '\\.pdf$', ''
+    ) AS doc_title,
+    p.value:index::NUMBER AS page_index,
+    p.value:content::VARCHAR AS chunk_text
+FROM
+    DIRECTORY(@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE) d,
+    LATERAL FLATTEN(
+        input => AI_PARSE_DOCUMENT(
+            TO_FILE('@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE', d.relative_path),
+            {'mode': 'LAYOUT', 'page_split': true}
+        ):pages
+    ) p
+WHERE
+    relative_path LIKE '%.pdf'
+    AND p.value:content::VARCHAR IS NOT NULL;
+
+-- パース結果を確認
+SELECT doc_filename, doc_title, page_index, LEFT(chunk_text, 100) AS preview
+FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
+ORDER BY doc_filename, page_index;
+
+-- 件数確認
+SELECT
+    doc_title,
+    COUNT(*) AS chunk_count,
+    SUM(LENGTH(chunk_text)) AS total_chars
+FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
+GROUP BY doc_title
+ORDER BY doc_title;
+
+
+-- ============================================================================
+-- Step 5-8: Cortex Search Service の作成
+-- ============================================================================
+-- ★ Cortex Search は、テキストデータに対するセマンティック検索（意味検索）を
+--   提供するサービスです。キーワード一致ではなく、意味的に近い内容を検索できます。
+--
+-- ★ 設定項目:
+--   - ON: 検索対象のテキストカラム
+--   - ATTRIBUTES: フィルタリングに使用するカラム（ファセット）
+--   - WAREHOUSE: インデックス構築に使用するウェアハウス
+--   - TARGET_LAG: インデックスの更新間隔
+-- ============================================================================
+
+CREATE OR REPLACE CORTEX SEARCH SERVICE
+    HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH
+  ON chunk_text
+  ATTRIBUTES doc_title, doc_filename
+  WAREHOUSE = HAKUHODO_HANDSON_WH
+  TARGET_LAG = '1 hour'
+  COMMENT = '博報堂社内ナレッジ検索サービス。媒体仕入ガイドライン、予算管理マニュアル等のPDFドキュメントをセマンティック検索可能にする。'
+AS (
+    SELECT
+        chunk_text,
+        doc_title,
+        doc_filename
+    FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
+);
+
+-- Cortex Search Service が作成されたことを確認
+SHOW CORTEX SEARCH SERVICES IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
+
+
+-- ============================================================================
+-- Step 5-9: Cortex Search の動作確認
+-- ============================================================================
+-- ★ CORTEX_SEARCH 関数で検索テストを行います。
+--   自然言語のクエリに対して、意味的に関連するチャンクが返されます。
+
+-- テスト1: 仕入の承認フローについて検索
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+    'HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH',
+    '{
+        "query": "仕入の承認フローと決裁基準",
+        "columns": ["chunk_text", "doc_title"],
+        "limit": 3
+    }'
+);
+
+-- テスト2: デジタル広告のKPI基準について検索
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+    'HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH',
+    '{
+        "query": "デジタル広告のKPI基準とCPA目安",
+        "columns": ["chunk_text", "doc_title"],
+        "limit": 3
+    }'
+);
+
+
+-- ============================================================================
+-- Step 5-10: Snowflake Intelligence（Agent）の作成
+-- ============================================================================
+-- ★ Snowflake Intelligence は、複数のツールを組み合わせた AI エージェントです。
+--   ここでは以下の2つのツールを統合します:
+--
+--   1. Cortex Analyst (cortex_analyst_text_to_sql):
+--      → セマンティックビューを参照し、構造化データに対する質問にSQLで回答
+--      → 「2024年度の仕入高は？」「予算達成率が最も低い部門は？」等
+--
+--   2. Cortex Search (cortex_search):
+--      → ナレッジドキュメントを検索し、社内ルール・手順に関する質問に回答
+--      → 「仕入の承認フローは？」「デジタル広告のKPI基準は？」等
+--
+-- ★ エージェントが質問の内容に応じて適切なツールを自動選択します。
+-- ============================================================================
+
+CREATE OR REPLACE AGENT HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
+  COMMENT = '博報堂DYグループ向けAIアシスタント。構造化データの分析（Cortex Analyst）と社内ナレッジ検索（Cortex Search）を統合。'
+  FROM SPECIFICATION $$
+models:
+  orchestration: claude-4-sonnet
+
+tools:
+  - tool_spec:
+      type: "cortex_analyst_text_to_sql"
+      name: "DataAnalyst"
+  - tool_spec:
+      type: "cortex_search"
+      name: "KnowledgeSearch"
+
+tool_resources:
+  DataAnalyst:
+    semantic_view: "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW"
+  KnowledgeSearch:
+    name: "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH"
+
+instructions: |
+  あなたは博報堂DYグループの社内AIアシスタント「HAKUHODO Intelligence」です。
+  以下の2つのツールを使い分けて、ユーザーの質問に日本語で的確に回答してください。
+
+  ## ツールの使い分け
+  - **DataAnalyst**: 数値データ・実績・予算・仕入高・売上・KPI等の定量的な質問
+    例: 「2024年度の仕入高は？」「予算達成率が最も低い部門は？」「媒体種類別の収益率は？」
+  - **KnowledgeSearch**: 社内ルール・ガイドライン・手順・マニュアル等の定性的な質問
+    例: 「仕入の承認フローは？」「デジタル広告のKPI基準は？」「予算策定のスケジュールは？」
+
+  ## 回答ルール
+  - 常に日本語で回答する
+  - 数値を含む回答では、具体的な数字を明示する
+  - 金額は読みやすい単位（万円、億円）で表示する
+  - 根拠となるデータソース（テーブル名またはドキュメント名）を明記する
+  - 不明な場合は推測せず、「該当するデータが見つかりません」と回答する
+$$;
+
+-- Agent が作成されたことを確認
+SHOW AGENTS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
+
+-- ============================================================================
+-- Step 5-11: Snowflake Intelligence の動作確認
+-- ============================================================================
+-- ★ Snowsight での利用方法:
+--
+--   1. Snowsight にログイン
+--   2. 左メニュー「AI & ML」→「Snowflake Intelligence」を選択
+--   3. 「HAKUHODO_INTELLIGENCE」を選択
+--   4. チャット画面で質問を入力
+--
+-- ★ 質問例（構造化データ → DataAnalyst ツールが応答）:
+--   - 「2024年度の媒体種類別仕入高を教えて」
+--   - 「予算達成率が最も低い部門はどこ？」
+--   - 「博報堂系列と大広系列の仕入高を比較して」
+--   - 「四半期ごとの収益率の推移を見せて」
+--
+-- ★ 質問例（ナレッジ検索 → KnowledgeSearch ツールが応答）:
+--   - 「仕入の承認フローと決裁金額の基準を教えて」
+--   - 「デジタル広告のビューアビリティ率の最低基準は？」
+--   - 「予算と実績の差異が10%を超えた場合のアクションは？」
+--   - 「自動車業種の営業戦略のポイントは？」
+--   - 「Snowflake Intelligence の使い方を教えて」
+--
+-- ★ 質問例（両方のツールを組み合わせ）:
+--   - 「デジタル媒体の仕入高と、デジタル広告の運用基準を合わせて教えて」
+--   - 「予算達成率が低い部門の改善方法をナレッジから提案して」
+-- ============================================================================
+
+-- ★ SQL からも Agent を呼び出せます（プログラマティック利用）:
+-- SELECT SNOWFLAKE.CORTEX.AGENT(
+--     'HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE',
+--     '2024年度の仕入高が最も高い媒体種類は？'
+-- );
+
+-- ============================================================================
+-- ★ 学びのポイント（追加）:
+--   - AI_PARSE_DOCUMENT: PDF/画像からテキストを抽出する Cortex AI 関数
+--   - Cortex Search: セマンティック検索（意味ベースの全文検索）サービス
+--   - Snowflake Intelligence (Agent): 複数ツールを統合した AI エージェント
+--   - Agent は質問内容に応じて適切なツール（Analyst / Search）を自動選択
+--   - 構造化データ（テーブル）と非構造化データ（PDF）を一つの窓口で横断検索
+-- ============================================================================
 -- 次のステップ: 06_ai_functions.sql に進んでください
 -- ============================================================================
