@@ -296,6 +296,61 @@ LIMIT 20;
 ALTER WAREHOUSE HAKUHODO_HANDSON_WH SET WAREHOUSE_SIZE = 'X-SMALL';
 
 -- ============================================================================
+-- Step 1-7: リザルトキャッシュの体験
+-- ============================================================================
+-- Snowflake は同一クエリの結果を自動キャッシュします（Result Cache）。
+-- 同じクエリを2回実行すると、2回目はウェアハウスを使わず即座に結果を返します。
+--
+-- ★ ポイント:
+--   - キャッシュはユーザー単位ではなくウェアハウス単位で共有される
+--   - ソーステーブルのデータが変更されるとキャッシュは無効化される
+--   - キャッシュヒット時はウェアハウスが起動しないためクレジット消費ゼロ
+--   - 24時間以内の同一クエリに有効
+-- ============================================================================
+
+-- ★ 1回目: 仕入データ × 代理店マスタの JOIN + 集計クエリ
+-- Query Profile で「WAREHOUSE」ノードが実行されることを確認してください
+SELECT
+    m.AGENCY_KEY                     AS "代理店系列",
+    m.AGENCY_NAME_LATEST             AS "代理店名",
+    p."広告主業種_大名"               AS "業種",
+    COUNT(*)                         AS "取引件数",
+    SUM(p."仕入高_建値")             AS "仕入高合計",
+    SUM(p."媒体収益実績_正味")       AS "媒体収益合計",
+    ROUND(SUM(p."媒体収益実績_正味") * 100.0
+        / NULLIF(SUM(p."仕入高_建値"), 0), 2) AS "収益率%"
+FROM PURCHASE_NEW_TABLE p
+JOIN MST_AGENCY_GROUP m
+    ON p."会社_営業_コード_最新" = m.AGENCY_CODE_LATEST
+GROUP BY m.AGENCY_KEY, m.AGENCY_NAME_LATEST, p."広告主業種_大名"
+ORDER BY "仕入高合計" DESC
+LIMIT 20;
+
+-- ★ 2回目: まったく同じクエリを実行
+-- Query Profile を開き「QUERY RESULT REUSE」と表示されることを確認してください
+-- → ウェアハウスが使われず、実行時間がほぼ 0ms になります
+SELECT
+    m.AGENCY_KEY                     AS "代理店系列",
+    m.AGENCY_NAME_LATEST             AS "代理店名",
+    p."広告主業種_大名"               AS "業種",
+    COUNT(*)                         AS "取引件数",
+    SUM(p."仕入高_建値")             AS "仕入高合計",
+    SUM(p."媒体収益実績_正味")       AS "媒体収益合計",
+    ROUND(SUM(p."媒体収益実績_正味") * 100.0
+        / NULLIF(SUM(p."仕入高_建値"), 0), 2) AS "収益率%"
+FROM PURCHASE_NEW_TABLE p
+JOIN MST_AGENCY_GROUP m
+    ON p."会社_営業_コード_最新" = m.AGENCY_CODE_LATEST
+GROUP BY m.AGENCY_KEY, m.AGENCY_NAME_LATEST, p."広告主業種_大名"
+ORDER BY "仕入高合計" DESC
+LIMIT 20;
+
+-- ★ 確認方法:
+--   Snowsight の Query History で2つのクエリを比較してください。
+--   1回目: 実行時間 = 数百ms〜数秒、Bytes scanned > 0
+--   2回目: 実行時間 = ほぼ 0ms、Bytes scanned = 0 (QUERY RESULT REUSE)
+
+-- ============================================================================
 -- データロード完了
 -- 次のステップ: 02_data_engineering_stream_task.sql に進んでください
 -- ============================================================================

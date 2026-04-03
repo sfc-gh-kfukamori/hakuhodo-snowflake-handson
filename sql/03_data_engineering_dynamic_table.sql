@@ -178,7 +178,7 @@ INSERT INTO HAKUHODO_HANDSON_DB.HAKUHODO_HANDSON_SCHEMA.PURCHASE_NEW_TABLE (
     "仕入高_建値", "媒体収益実績_正味"
 ) VALUES (
     20250402, 2025, 202504, '1Q',
-    '001', '博報堂DYテスト',
+    'D001', '株式会社大広',
     'D002', 'DT確認用部門',
     'S002', 'DT確認用部署',
     'DT確認得意先', 'DT確認広告主', 'DT確認業種',

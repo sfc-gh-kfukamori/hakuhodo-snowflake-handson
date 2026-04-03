@@ -6,6 +6,100 @@ Snowflake プラットフォームの全レイヤーを一気通貫で体験し�
 
 ---
 
+## このハンズオンで学べること
+
+このハンズオンを通じて、以下のスキルを習得できます。
+
+- **データの取り込みと管理**: クラウドストレージからSnowflakeへのデータロード、ウェアハウスサイジングによる性能チューニング、リザルトキャッシュによるコスト最適化
+- **データパイプラインの構築**: 命令型（Stream/Task）と宣言型（Dynamic Table）の2つのアプローチを同じデータで比較し、使い分けの判断力を身につける
+- **BIダッシュボードの構築**: Snowflake内で完結するStreamlitアプリの開発、Cortex AIを組み込んだ自然言語データ分析
+- **AIの業務活用**: SQL内でLLMを直接呼び出すCortex AI Function、ドキュメントのパース・チャンク分割・セマンティック検索、自然言語によるデータ問い合わせ
+- **AI エージェントの構築**: 構造化データ（SQL）と非構造化データ（社内ナレッジ）を統合検索できるSnowflake Intelligenceエージェントの設計と構築
+- **DevOps連携**: Snowflake上からGitリポジトリを直接参照するGit Integration
+
+---
+
+## ハンズオンのシナリオ
+
+あなたは博報堂DYグループのデータチームに配属されました。
+グループ全体の**媒体仕入データ**と**組織損益データ**を活用し、経営層やアカウントチームが意思決定に使えるデータ基盤を Snowflake 上に構築することがミッションです。
+
+**取り扱うデータ:**
+
+| データ | 内容 | 規模 |
+|-------|------|------|
+| 媒体仕入データ | テレビ・デジタル・新聞等の媒体ごとの仕入高・媒体収益・営収実績 | 約10,000件 |
+| 組織損益データ | 会社・部門・管理項目ごとの予算と実績 | 約10,000件 |
+| 代理店グループマスタ | 博報堂(H)・大広(D)・読広(Y)の系列コード | 30件 |
+| 社内ナレッジ文書 | 仕入ガイドライン・予算管理マニュアル・運用基準等のPDF | 5文書 |
+
+**構築するもの:**
+
+1. **GCS → Snowflake のデータロードパイプライン** — 外部ステージ経由でCSVデータを取り込み
+2. **リアルタイム加工パイプライン** — 仕入データと代理店マスタをJOINし、月次集計・予実分析を自動化
+3. **BIダッシュボード** — 仕入分析・組織損益・AI問い合わせの3画面構成
+4. **Snowflake Intelligence エージェント** — 「先月のデジタル媒体の仕入高は？」「仕入の承認フローを教えて」といった質問に、データ検索とナレッジ検索を組み合わせて回答するAIアシスタント
+
+---
+
+## 学べる Snowflake 機能一覧
+
+### コアプラットフォーム
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| Database / Schema / Warehouse | Snowflakeの基本オブジェクト。コンピュートとストレージが完全分離 | Section 0 |
+| Warehouse サイズ変更 | WHサイズを変えるだけで処理能力を線形スケール（X-SMALL→MEDIUM で4倍） | Section 1 |
+| Result Cache | 同一クエリの2回目以降はWH不使用で即座に結果を返却（クレジット消費ゼロ） | Section 1 |
+| Role / 権限管理 | RBAC によるアクセス制御（ACCOUNTADMIN, SYSADMIN 等） | Section 0 |
+
+### データ取り込み
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| Storage Integration | クラウドストレージ（GCS/S3/Azure）への認証を管理するオブジェクト | Section 1 |
+| External Stage | クラウドストレージのパスを Snowflake のステージとして定義 | Section 1 |
+| COPY INTO | ステージ上のファイルをテーブルにバルクロード | Section 1 |
+| File Format | CSV/JSON/Parquet 等のファイル形式を定義（区切り文字、ヘッダー、エンコーディング） | Section 1 |
+
+### データエンジニアリング
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| Stream | テーブルの変更（INSERT/UPDATE/DELETE）を自動追跡するCDC機構 | Section 2 |
+| Task | SQLをスケジュール実行。WHEN句で条件付き実行が可能 | Section 2 |
+| Dynamic Table | SELECT文で結果を宣言するだけで、Snowflakeが自動的に増分リフレッシュ | Section 3 |
+| TARGET_LAG | Dynamic Tableのリフレッシュ目標遅延を宣言的に指定 | Section 3 |
+
+### AI / ML（Cortex AI）
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| CORTEX.COMPLETE | LLMによるテキスト生成。データ分析レポートの自動生成等 | Section 4, 6 |
+| CORTEX.SUMMARIZE | テキストの自動要約 | Section 6 |
+| CORTEX.TRANSLATE | 多言語翻訳 | Section 6 |
+| CORTEX.SENTIMENT | 感情分析（-1.0〜1.0のスコア） | Section 6 |
+| CORTEX.EXTRACT_ANSWER | テキストからの質問応答 | Section 6 |
+| AI_PARSE_DOCUMENT | PDFからテキストをMarkdown形式で抽出 | Section 5 |
+| SPLIT_TEXT_RECURSIVE_CHARACTER | テキストを再帰的にチャンク分割（RAG用前処理） | Section 5 |
+
+### セマンティックレイヤー / 検索 / エージェント
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| Semantic View | テーブル・カラムにビジネス上の意味を定義し、自然言語→SQL変換を高精度化 | Section 5 |
+| Cortex Search Service | テキストデータに対するセマンティック検索（意味ベースの類似検索） | Section 5 |
+| Snowflake Intelligence (Agent) | 複数ツールを統合したAIエージェント。質問に応じてAnalystとSearchを自動選択 | Section 5 |
+
+### アプリケーション / DevOps
+
+| 機能 | 概要 | 使用セクション |
+|-----|------|--------------|
+| Streamlit in Snowflake | Snowflake内で完結するPythonダッシュボード。データを外部に持ち出さずに可視化 | Section 4 |
+| Git Integration | Snowflakeから直接GitHubリポジトリを参照し、ファイルを読み込み | Section 7 |
+
+---
+
 ## 全体アーキテクチャ
 
 ```
