@@ -528,6 +528,7 @@ SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
 
 CREATE OR REPLACE AGENT HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
   COMMENT = '博報堂DYグループ向けAIアシスタント。構造化データの分析（Cortex Analyst）と社内ナレッジ検索（Cortex Search）を統合。'
+  PROFILE = '{"display_name": "博報堂DYグループ Intelligence", "color": "blue"}'
   FROM SPECIFICATION
   $$
   models:
@@ -579,9 +580,15 @@ SHOW AGENTS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
 -- ★ Snowsight での利用方法:
 --
 --   1. Snowsight にログイン
---   2. 左メニュー「AI & ML」→「Snowflake Intelligence」を選択
---   3. 「HAKUHODO_INTELLIGENCE」を選択
---   4. チャット画面で以下の質問を試してみましょう
+--   2. 左メニュー「AI & ML」を選択
+--   3. 「Snowflake Intelligence」タブを選択
+--   4. ★重要: 初回は Agent が一覧に表示されません。
+--      右上の「Add existing agent」ボタンをクリックし、以下を選択:
+--        - Database: HAKUHODO_HANDSON_DB
+--        - Schema: ANALYTICS
+--        - Agent: HAKUHODO_INTELLIGENCE
+--   5. 一覧に追加された「HAKUHODO_INTELLIGENCE」をクリック
+--   6. チャット画面で以下の質問を試してみましょう
 --
 -- ============================================================================
 -- ★ カテゴリ1: 構造化データ分析（DataAnalyst ツール）
