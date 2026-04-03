@@ -346,59 +346,104 @@ LIST @HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE;
 ALTER STAGE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE REFRESH;
 
 -- ============================================================================
--- Step 5-7: AI_PARSE_DOCUMENT でPDFをパースしチャンクテーブルに格納
+-- Step 5-7: AI_PARSE_DOCUMENT でPDFをパース → SPLIT_TEXT でチャンク分割
 -- ============================================================================
--- ★ AI_PARSE_DOCUMENT は Snowflake Cortex の関数で、PDF/画像からテキストを抽出します。
---   - mode='LAYOUT': レイアウト（表・見出し等）を保持してMarkdown形式で抽出
---   - page_split=true: ページごとに分割して抽出
+-- ★ 2段階のパイプラインで処理します:
 --
--- ★ パースしたテキストをチャンクテーブルに格納し、Cortex Search で検索可能にします。
+--   [Step A] AI_PARSE_DOCUMENT でPDFからMarkdownテキストを抽出
+--     - mode='LAYOUT': レイアウト（表・見出し等）を保持してMarkdown形式で抽出
+--
+--   [Step B] SPLIT_TEXT_RECURSIVE_CHARACTER でチャンク分割
+--     - Snowflake Cortex の専用チャンク関数を使用
+--     - テキストを意味のある単位（段落・改行・空白）で再帰的に分割
+--     - チャンクサイズ: 1500トークン、オーバーラップ: 300トークン
+--     - format='markdown' でMarkdownの構造を考慮して分割
+--
+-- ★ なぜチャンク分割が必要か:
+--   - ページ全体をそのまま格納すると、検索精度が低下する
+--   - 適切なサイズのチャンクにすることで、関連部分だけが検索結果に返る
+--   - オーバーラップにより、チャンク境界での文脈欠落を防ぐ
 -- ============================================================================
 
--- パース結果を格納するテーブル
-CREATE OR REPLACE TABLE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS (
-    chunk_id        NUMBER AUTOINCREMENT,
+-- [Step A] パース結果を一時的に格納するテーブル
+CREATE OR REPLACE TABLE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_RAW_TEXT (
     doc_filename    VARCHAR,
     doc_title       VARCHAR,
-    page_index      NUMBER,
-    chunk_text      VARCHAR,
+    raw_text        VARCHAR,
     created_at      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
--- PDFをパースしてチャンクテーブルに挿入
--- ★ 各PDFをページ単位でパースし、テキストをチャンクとして格納します
-INSERT INTO HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
-    (doc_filename, doc_title, page_index, chunk_text)
+-- PDFをパースしてテキストを抽出（ページ分割なし = 全文を1レコードで取得）
+INSERT INTO HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_RAW_TEXT
+    (doc_filename, doc_title, raw_text)
 SELECT
     relative_path AS doc_filename,
-    -- ファイル名から拡張子を除去してドキュメントタイトルとする
     REGEXP_REPLACE(
         REGEXP_REPLACE(relative_path, '^[0-9]+_', ''),
         '\\.pdf$', ''
     ) AS doc_title,
-    p.value:index::NUMBER AS page_index,
-    p.value:content::VARCHAR AS chunk_text
+    AI_PARSE_DOCUMENT(
+        TO_FILE('@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE', relative_path),
+        {'mode': 'LAYOUT'}
+    ):content::VARCHAR AS raw_text
 FROM
-    DIRECTORY(@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE) d,
-    LATERAL FLATTEN(
-        input => AI_PARSE_DOCUMENT(
-            TO_FILE('@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE', d.relative_path),
-            {'mode': 'LAYOUT', 'page_split': true}
-        ):pages
-    ) p
+    DIRECTORY(@HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_DOCS_STAGE)
 WHERE
-    relative_path LIKE '%.pdf'
-    AND p.value:content::VARCHAR IS NOT NULL;
+    relative_path LIKE '%.pdf';
 
--- パース結果を確認
-SELECT doc_filename, doc_title, page_index, LEFT(chunk_text, 100) AS preview
+-- パース結果の確認（各ドキュメントのテキスト量を確認）
+SELECT
+    doc_title,
+    LENGTH(raw_text) AS text_length,
+    LEFT(raw_text, 200) AS preview
+FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_RAW_TEXT
+ORDER BY doc_title;
+
+-- [Step B] SPLIT_TEXT_RECURSIVE_CHARACTER でチャンク分割
+-- ★ Snowflake Cortex のチャンク専用関数を使用します:
+--   - 第1引数: 分割対象テキスト
+--   - 第2引数: フォーマット ('markdown' = Markdown構造を考慮)
+--   - 第3引数: チャンクサイズ（トークン数）
+--   - 第4引数: オーバーラップ（トークン数、前後のチャンクと重複する部分）
+--   - 内部的に ['\\n\\n', '\\n', ' ', ''] の順でセパレータを試行
+
+CREATE OR REPLACE TABLE HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS (
+    chunk_id        NUMBER AUTOINCREMENT,
+    doc_filename    VARCHAR,
+    doc_title       VARCHAR,
+    chunk_index     NUMBER,
+    chunk_text      VARCHAR,
+    created_at      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+INSERT INTO HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
+    (doc_filename, doc_title, chunk_index, chunk_text)
+SELECT
+    doc_filename,
+    doc_title,
+    c.index AS chunk_index,
+    c.value::VARCHAR AS chunk_text
+FROM
+    HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_RAW_TEXT,
+    LATERAL FLATTEN(
+        input => SNOWFLAKE.CORTEX.SPLIT_TEXT_RECURSIVE_CHARACTER(
+            raw_text,       -- パース済みMarkdownテキスト
+            'markdown',     -- フォーマット: Markdown構造を考慮
+            1500,           -- チャンクサイズ: 1500トークン
+            300             -- オーバーラップ: 300トークン
+        )
+    ) c;
+
+-- チャンク結果の確認
+SELECT doc_filename, doc_title, chunk_index, LEFT(chunk_text, 100) AS preview
 FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
-ORDER BY doc_filename, page_index;
+ORDER BY doc_filename, chunk_index;
 
--- 件数確認
+-- ドキュメントごとのチャンク数・文字数を確認
 SELECT
     doc_title,
     COUNT(*) AS chunk_count,
+    ROUND(AVG(LENGTH(chunk_text))) AS avg_chunk_chars,
     SUM(LENGTH(chunk_text)) AS total_chars
 FROM HAKUHODO_HANDSON_DB.ANALYTICS.KNOWLEDGE_CHUNKS
 GROUP BY doc_title
@@ -559,6 +604,9 @@ SHOW AGENTS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
 -- ============================================================================
 -- ★ 学びのポイント（追加）:
 --   - AI_PARSE_DOCUMENT: PDF/画像からテキストを抽出する Cortex AI 関数
+--   - SPLIT_TEXT_RECURSIVE_CHARACTER: テキストを再帰的にチャンク分割する関数
+--     → ページ単位ではなく、意味のある単位で分割することで検索精度が向上
+--     → オーバーラップ（重複）により、チャンク境界での文脈欠落を防止
 --   - Cortex Search: セマンティック検索（意味ベースの全文検索）サービス
 --   - Snowflake Intelligence (Agent): 複数ツールを統合した AI エージェント
 --   - Agent は質問内容に応じて適切なツール（Analyst / Search）を自動選択
