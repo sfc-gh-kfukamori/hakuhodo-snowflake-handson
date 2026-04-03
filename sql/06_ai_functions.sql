@@ -39,7 +39,7 @@ SELECT
     "媒体収益合計",
     "媒体収益予算合計",
     SNOWFLAKE.CORTEX.COMPLETE(
-        'claude-3-5-sonnet',
+        'claude-4-sonnet',
         '以下の月次仕入データについて、50文字以内で簡潔な分析コメントを日本語で生成してください。' ||
         '年月: ' || "年月"::VARCHAR ||
         ', 会社: ' || COALESCE("会社_営業_名_最新", 'N/A') ||
@@ -72,7 +72,7 @@ WITH dept_summary AS (
     LIMIT 10
 )
 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-    'claude-3-5-sonnet',
+    'claude-4-sonnet',
     '以下は部門別の予算達成状況です。全体の傾向と注目すべきポイントを200文字以内で日本語で分析してください。\n\n' ||
     LISTAGG(
         '部門: ' || COALESCE("部門", 'N/A') ||
@@ -100,7 +100,7 @@ WITH industry_data AS (
     LIMIT 10
 )
 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-    'claude-3-5-sonnet',
+    'claude-4-sonnet',
     '以下は広告主業種別の仕入高データです。どの業種が大きく、今後の営業戦略への示唆を100文字以内で日本語で述べてください。\n\n' ||
     LISTAGG(
         '業種: ' || "広告主業種_大名" ||
@@ -216,7 +216,7 @@ WITH ai_comments AS (
         "部門",
         "予実達成率",
         SNOWFLAKE.CORTEX.COMPLETE(
-            'claude-3-5-sonnet',
+            'claude-4-sonnet',
             '予算達成率が' || COALESCE("予実達成率"::VARCHAR, '0') ||
             '%の部門について、30文字以内で状況を述べてください。日本語で。'
         ) AS ai_comment
@@ -292,7 +292,7 @@ CREATE OR REPLACE DYNAMIC TABLE DT_MONTHLY_AI_REPORT
         END AS "予実達成率",
         SUM("取引件数") AS "取引件数合計",
         SNOWFLAKE.CORTEX.COMPLETE(
-            'claude-3-5-sonnet',
+            'claude-4-sonnet',
             '以下の月次仕入データの要点を50文字以内で日本語で述べてください。' ||
             '仕入高: ' || SUM("仕入高合計")::VARCHAR || '円, ' ||
             '媒体収益: ' || SUM("媒体収益合計")::VARCHAR || '円, ' ||
@@ -301,7 +301,7 @@ CREATE OR REPLACE DYNAMIC TABLE DT_MONTHLY_AI_REPORT
         ) AS "AI月次サマリ",
         SNOWFLAKE.CORTEX.TRANSLATE(
             SNOWFLAKE.CORTEX.COMPLETE(
-                'claude-3-5-sonnet',
+                'claude-4-sonnet',
                 '以下の月次仕入データの要点を50文字以内で日本語で述べてください。' ||
                 '仕入高: ' || SUM("仕入高合計")::VARCHAR || '円, ' ||
                 '媒体収益: ' || SUM("媒体収益合計")::VARCHAR || '円'

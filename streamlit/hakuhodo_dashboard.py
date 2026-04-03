@@ -368,7 +368,7 @@ with tab3:
                 escaped = context.replace("\\", "\\\\").replace("'", "''")
 
                 result = session.sql(
-                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{escaped}') AS RESPONSE"
+                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-4-sonnet', '{escaped}') AS RESPONSE"
                 ).collect()
 
                 answer = str(result[0]["RESPONSE"])
