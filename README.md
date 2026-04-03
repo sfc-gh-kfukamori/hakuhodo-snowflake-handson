@@ -121,7 +121,7 @@ Snowflake プラットフォームの全レイヤーを一気通貫で体験し�
                           │  │  ├─ DT_PURCHASE_WITH_AGENCY   (仕入+代理店)  │  │
                           │  │  ├─ DT_PURCHASE_MONTHLY_SUMMARY (月次集計)   │  │
                           │  │  ├─ DT_SPECIAL_FEE_SUMMARY    (損益集計)    │  │
-                          │  │  ├─ DT_MONTHLY_AI_REPORT      (AI月次レポ)  │  │
+                          │  │  ├─ DT_MONTHLY_AI_REPORT      (AI月次レポ※)│  │
                           │  │  ├─ KNOWLEDGE_CHUNKS           (PDFチャンク) │  │
                           │  │  ├─ HAKUHODO_SEMANTIC_VIEW     (意味定義)   │  │
                           │  │  └─ HAKUHODO_KNOWLEDGE_SEARCH  (検索Service)│  │
@@ -137,6 +137,8 @@ Snowflake プラットフォームの全レイヤーを一気通貫で体験し�
                           │  └─────────┘  └─────────────┘  └────────────────┘  │
                           └─────────────────────────────────────────────────────┘
 ```
+
+※ DT_MONTHLY_AI_REPORT は Section 6 (AI Functions) で作成します。
 
 ---
 
@@ -251,14 +253,11 @@ GCS Bucket (hakuhodo_handson/)
  RAW テーブル群       │    DT_PURCHASE_WITH_AGENCY                          │
  ──────────────────▶ │    (TARGET_LAG=2min)                                │
                      │         │                                           │
-                     │         ├──▶ DT_PURCHASE_MONTHLY_SUMMARY            │
-                     │         │    (TARGET_LAG=5min, 月次集計)              │
-                     │         │         │                                 │
-                     │         │         └──▶ DT_MONTHLY_AI_REPORT         │
-                     │         │              (TARGET_LAG=10min, AI分析)    │
-                     │         │                                           │
+                     │         └──▶ DT_PURCHASE_MONTHLY_SUMMARY            │
+                     │              (TARGET_LAG=2min, 月次集計)              │
+                     │                                                     │
  SPECIAL_FEE_TABLE   │    DT_SPECIAL_FEE_SUMMARY                          │
- ──────────────────▶ │    (TARGET_LAG=5min, 予実集計)                       │
+ ──────────────────▶ │    (TARGET_LAG=2min, 予実集計)                       │
                      └─────────────────────────────────────────────────────┘
 ```
 
@@ -275,9 +274,8 @@ GCS Bucket (hakuhodo_handson/)
 | Dynamic Table | TARGET_LAG | 処理内容 |
 |--------------|-----------|---------|
 | DT_PURCHASE_WITH_AGENCY | 2分 | 仕入データ + 代理店マスタ JOIN |
-| DT_PURCHASE_MONTHLY_SUMMARY | 5分 | 月次・媒体種類・業種別の集計（SUM, COUNT） |
-| DT_SPECIAL_FEE_SUMMARY | 5分 | 会社・部門・管理項目別の予実集計 + 達成率計算 |
-| DT_MONTHLY_AI_REPORT | 10分 | Cortex AI (COMPLETE) による月次自動分析レポート |
+| DT_PURCHASE_MONTHLY_SUMMARY | 2分 | 月次・媒体種類・業種別の集計（SUM, COUNT） |
+| DT_SPECIAL_FEE_SUMMARY | 2分 | 会社・部門・管理項目別の予実集計 + 達成率計算 |
 
 **Stream/Task vs Dynamic Table 比較:**
 
@@ -388,6 +386,12 @@ SQL の中で直接 LLM を呼び出す Cortex AI Function の活用例を学び
 | `CORTEX.EXTRACT_ANSWER` | 質問応答 | テキストから特定の回答を抽出 |
 
 **使用モデル**: `claude-4-sonnet`
+
+**応用例 — AI × Dynamic Table:**
+
+このセクションでは `DT_MONTHLY_AI_REPORT` という Dynamic Table を作成します。
+DT_PURCHASE_MONTHLY_SUMMARY（Section 3 で作成）をソースに、Cortex AI (`COMPLETE`) で月次仕入データの自動分析レポートを生成します。
+データが更新されるたびに AI レポートも自動リフレッシュされる、AI をパイプラインに組み込んだ応用例です。
 
 **学びのポイント**: AI Function は SQL のパイプライン（Dynamic Table, Task 等）に直接組み込めるため、ETL の一部として AI 処理を自動化できます。
 
