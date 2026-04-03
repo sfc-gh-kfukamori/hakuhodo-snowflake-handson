@@ -1,20 +1,21 @@
 -- ============================================================================
 -- 博報堂 Snowflake ハンズオン
--- Section 5: Snowflake Intelligence（Cortex Analyst）
+-- Section 5: Snowflake Intelligence（セマンティックビュー + Cortex Analyst）
 -- ============================================================================
 -- このセクションでは以下を学びます:
---   1. Semantic Model（意味モデル）の定義
+--   1. セマンティックビュー（Semantic View）の作成
 --   2. Snowflake Intelligence の作成とセットアップ
 --   3. 自然言語によるデータ問い合わせの実践
 --
--- ★ Snowflake Intelligence とは:
---   Semantic Model を基盤に、ビジネスユーザーが自然言語で
---   データに質問できるチャットインターフェースです。
---   SQLを書かずにデータ分析ができるため、非エンジニアでも活用可能です。
+-- ★ セマンティックビューとは:
+--   テーブルやカラムに「ビジネス上の意味」を SQL で定義するオブジェクトです。
+--   「仕入高」がどのカラムを指すか、「年度」でどうフィルタするか等を定義し、
+--   Cortex Analyst が自然言語からSQLを正確に生成できるようにします。
 --
--- ★ Semantic Model とは:
---   テーブルやカラムに「ビジネス上の意味」を付与する定義ファイル(YAML)です。
---   「仕入高」がどのカラムを指すか、「年度」でどうフィルタするか等を定義します。
+-- ★ YAML ファイルとの違い:
+--   従来は YAML ファイルをステージにアップロードする方式でしたが、
+--   セマンティックビューは SQL で直接定義でき、バージョン管理やCI/CDとの
+--   統合が容易です。Snowflake が推奨する新しい方式です。
 -- ============================================================================
 
 USE ROLE SYSADMIN;
@@ -23,371 +24,284 @@ USE SCHEMA ANALYTICS;
 USE WAREHOUSE HAKUHODO_HANDSON_WH;
 
 -- ============================================================================
--- Step 5-1: Semantic Model 用ステージの作成
+-- Step 5-1: セマンティックビューの作成
 -- ============================================================================
--- Semantic Model の YAML ファイルを格納するステージを作成します。
-
-CREATE OR REPLACE STAGE HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE
-    COMMENT = 'Semantic Model YAML格納用ステージ';
-
--- ============================================================================
--- Step 5-2: Semantic Model YAML の定義
--- ============================================================================
--- 以下の YAML を hakuhodo_semantic_model.yaml として保存し、
--- ステージにアップロードしてください。
+-- ★ CREATE SEMANTIC VIEW で以下を定義します:
+--   - TABLES: 分析対象テーブルの論理名・同義語・コメント
+--   - FACTS: 数値カラム（集計の元データ）
+--   - DIMENSIONS: 分類カラム（フィルタ・グルーピングに使用）
+--   - METRICS: 集計式（SUM, AVG, COUNT, 計算式等）
+--   - AI_SQL_GENERATION: SQL生成時のLLMへの追加指示
 --
--- ★ アップロード方法:
---   PUT file:///path/to/hakuhodo_semantic_model.yaml
---       @HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE
---       AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
---
--- ★ または Snowsight の「Data」→ ステージ画面から直接アップロード可能です。
+-- ★ ポイント:
+--   - WITH SYNONYMS で同義語を定義 → 「仕入高」「仕入」どちらでも認識
+--   - COMMENT でカラムの意味を説明 → LLM がカラムの用途を正確に理解
+--   - METRICS で計算式を定義 → 予実達成率や収益率を自動計算
 -- ============================================================================
 
--- ★★★ 以下が hakuhodo_semantic_model.yaml の内容です ★★★
-/*
-name: hakuhodo_handson_model
-description: >
-  博報堂ハンズオン用セマンティックモデル。
-  仕入データ・組織損益データを自然言語で分析するための定義。
+CREATE OR REPLACE SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW
 
-tables:
+  -- -------------------------------------------------------
+  -- テーブル定義（論理名・同義語・説明）
+  -- -------------------------------------------------------
+  TABLES (
+    purchase AS HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
+      WITH SYNONYMS = ('仕入データ', '仕入月次集計', '購買データ')
+      COMMENT = '月次仕入集計データ。媒体種類別・業種別・代理店系列別の仕入高・媒体収益等を月単位で集計',
 
-  - name: purchase_monthly_summary
-    description: >
-      仕入データの月次集計テーブル。媒体種類別・業種別・代理店系列別の
-      仕入高、媒体収益、FC営収などの指標を月単位で集計したデータ。
-    base_table:
-      database: HAKUHODO_HANDSON_DB
-      schema: ANALYTICS
-      table: DT_PURCHASE_MONTHLY_SUMMARY
+    special_fee AS HAKUHODO_HANDSON_DB.ANALYTICS.DT_SPECIAL_FEE_SUMMARY
+      WITH SYNONYMS = ('組織損益', '特別費', '予実データ')
+      COMMENT = '組織損益の集計データ。会社・部門別の予算と実績を管理項目ごとに集計'
+  )
 
-    dimensions:
-      - name: fiscal_year
-        synonyms:
-          - 年度
-          - 会計年度
-        description: 4月起点の会計年度
-        expr: '"年度_4月起点"'
-        data_type: NUMBER
+  -- -------------------------------------------------------
+  -- ファクト（数値カラム = 集計の元データ）
+  -- -------------------------------------------------------
+  FACTS (
+    -- 仕入テーブルのファクト
+    purchase.f_deals AS "取引件数"
+      COMMENT = '取引の件数',
+    purchase.f_purchase_amount AS "仕入高合計"
+      COMMENT = '仕入高の合計金額',
+    purchase.f_media_revenue AS "媒体収益合計"
+      COMMENT = '媒体収益の実績合計',
+    purchase.f_media_budget AS "媒体収益予算合計"
+      COMMENT = '媒体収益の予算合計',
+    purchase.f_media_variance AS "媒体収益予実差異"
+      COMMENT = '媒体収益の予実差異',
+    purchase.f_fc_revenue AS "FC営収合計"
+      COMMENT = 'FC営業収入の合計',
+    purchase.f_staff_cost AS "スタッフコスト合計"
+      COMMENT = 'スタッフコストの合計',
 
-      - name: year_month
-        synonyms:
-          - 年月
-          - 月
-        description: 年月（YYYYMM形式）
-        expr: '"年月"'
-        data_type: NUMBER
+    -- 組織損益テーブルのファクト
+    special_fee.f_actual AS "実績合計"
+      COMMENT = '実績の合計金額',
+    special_fee.f_budget AS "予算合計"
+      COMMENT = '予算の合計金額',
+    special_fee.f_variance AS "予実差異"
+      COMMENT = '実績 - 予算の差異',
+    special_fee.f_achievement_rate AS "予実達成率"
+      COMMENT = '予算達成率（%）'
+  )
 
-      - name: quarter
-        synonyms:
-          - 四半期
-          - Q
-        description: 4月起点の四半期（1Q〜4Q）
-        expr: '"四半期_4月起点"'
-        data_type: VARCHAR
+  -- -------------------------------------------------------
+  -- ディメンション（分類カラム = フィルタ・GROUP BY に使用）
+  -- -------------------------------------------------------
+  DIMENSIONS (
+    -- 仕入テーブルのディメンション
+    purchase.dim_fiscal_year AS "年度_4月起点"
+      WITH SYNONYMS = ('年度', '会計年度', 'FY')
+      COMMENT = '4月起点の会計年度',
+    purchase.dim_year_month AS "年月"
+      WITH SYNONYMS = ('月', 'YYYYMM')
+      COMMENT = '年月（YYYYMM形式）',
+    purchase.dim_quarter AS "四半期_4月起点"
+      WITH SYNONYMS = ('四半期', 'Q', 'クォーター')
+      COMMENT = '4月起点の四半期（1Q〜4Q）',
+    purchase.dim_sales_company AS "会社_営業_名_最新"
+      WITH SYNONYMS = ('営業会社', '会社名')
+      COMMENT = '営業担当会社名',
+    purchase.dim_industry AS "広告主業種_大名"
+      WITH SYNONYMS = ('広告主業種', '業種大分類', '業種')
+      COMMENT = '広告主の業種大分類',
+    purchase.dim_mass_media AS "マスメディア区分名"
+      WITH SYNONYMS = ('マスメディア区分', 'メディア区分')
+      COMMENT = 'マスメディアの区分（テレビ、新聞、雑誌、ラジオ等）',
+    purchase.dim_media_type AS "媒体種類名"
+      WITH SYNONYMS = ('媒体種類', 'メディア種類', '媒体')
+      COMMENT = '媒体の種類',
+    purchase.dim_agency_key AS AGENCY_KEY
+      WITH SYNONYMS = ('代理店系列', '代理店グループ', '系列')
+      COMMENT = '代理店系列（H:博報堂, D:大広, Y:読広）',
 
-      - name: sales_company
-        synonyms:
-          - 会社
-          - 営業会社
-        description: 営業担当会社名
-        expr: '"会社_営業_名_最新"'
-        data_type: VARCHAR
+    -- 組織損益テーブルのディメンション
+    special_fee.dim_fee_fiscal_year AS "年度"
+      WITH SYNONYMS = ('損益年度')
+      COMMENT = '組織損益の会計年度',
+    special_fee.dim_fee_year_month AS "年月"
+      WITH SYNONYMS = ('損益年月')
+      COMMENT = '組織損益の年月（YYYYMM形式）',
+    special_fee.dim_fee_quarter AS "四半期"
+      WITH SYNONYMS = ('損益四半期')
+      COMMENT = '組織損益の四半期',
+    special_fee.dim_company AS "会社"
+      WITH SYNONYMS = ('グループ会社')
+      COMMENT = '会社名（博報堂、大広、博報堂DYメディアパートナーズ等）',
+    special_fee.dim_dept_group AS "部門G"
+      WITH SYNONYMS = ('部門グループ', '部門G')
+      COMMENT = '部門グループ',
+    special_fee.dim_department AS "部門"
+      WITH SYNONYMS = ('部門名')
+      COMMENT = '部門名',
+    special_fee.dim_mgmt_item AS "管理項目名称"
+      WITH SYNONYMS = ('管理項目', '項目', '損益項目')
+      COMMENT = '管理項目名称（売上総利益、コンサルティング収入等）'
+  )
 
-      - name: advertiser_industry_large
-        synonyms:
-          - 広告主業種
-          - 業種大分類
-          - 業種
-        description: 広告主の業種大分類
-        expr: '"広告主業種_大名"'
-        data_type: VARCHAR
+  -- -------------------------------------------------------
+  -- メトリクス（集計式 = SUMやCASE式で自動計算）
+  -- -------------------------------------------------------
+  METRICS (
+    -- 仕入系メトリクス
+    purchase.total_purchase
+      AS SUM(purchase.f_purchase_amount)
+      WITH SYNONYMS = ('仕入高', '仕入高合計', '仕入')
+      COMMENT = '仕入高の合計',
+    purchase.total_media_revenue
+      AS SUM(purchase.f_media_revenue)
+      WITH SYNONYMS = ('媒体収益', '媒体収益合計')
+      COMMENT = '媒体収益の合計',
+    purchase.total_media_budget
+      AS SUM(purchase.f_media_budget)
+      WITH SYNONYMS = ('媒体収益予算', '予算')
+      COMMENT = '媒体収益の予算合計',
+    purchase.budget_achievement_rate
+      AS CASE WHEN SUM(purchase.f_media_budget) = 0 THEN NULL
+              ELSE ROUND(SUM(purchase.f_media_revenue) * 100.0 / SUM(purchase.f_media_budget), 1) END
+      WITH SYNONYMS = ('予実達成率', '達成率')
+      COMMENT = '媒体収益の予算達成率（%）',
+    purchase.total_deals
+      AS SUM(purchase.f_deals)
+      WITH SYNONYMS = ('取引件数', '件数')
+      COMMENT = '取引件数の合計',
+    purchase.total_fc_revenue
+      AS SUM(purchase.f_fc_revenue)
+      WITH SYNONYMS = ('FC営収', 'FC営業収入')
+      COMMENT = 'FC営業収入の合計',
+    purchase.total_staff_cost
+      AS SUM(purchase.f_staff_cost)
+      WITH SYNONYMS = ('スタッフコスト', '人件費')
+      COMMENT = 'スタッフコストの合計',
+    purchase.revenue_rate
+      AS CASE WHEN SUM(purchase.f_purchase_amount) = 0 THEN NULL
+              ELSE ROUND(SUM(purchase.f_media_revenue) * 100.0 / SUM(purchase.f_purchase_amount), 2) END
+      WITH SYNONYMS = ('収益率', '媒体収益率')
+      COMMENT = '仕入高に対する媒体収益の比率（%）',
 
-      - name: mass_media_category
-        synonyms:
-          - マスメディア区分
-          - メディア区分
-        description: マスメディアの区分（テレビ、新聞、雑誌、ラジオ等）
-        expr: '"マスメディア区分名"'
-        data_type: VARCHAR
+    -- 組織損益系メトリクス
+    special_fee.total_actual
+      AS SUM(special_fee.f_actual)
+      WITH SYNONYMS = ('実績', '実績合計')
+      COMMENT = '実績の合計金額',
+    special_fee.total_budget
+      AS SUM(special_fee.f_budget)
+      WITH SYNONYMS = ('予算合計')
+      COMMENT = '予算の合計金額',
+    special_fee.total_variance
+      AS SUM(special_fee.f_variance)
+      WITH SYNONYMS = ('予実差異合計', '差異')
+      COMMENT = '予実差異の合計',
+    special_fee.fee_achievement_rate
+      AS CASE WHEN SUM(special_fee.f_budget) = 0 THEN NULL
+              ELSE ROUND(SUM(special_fee.f_actual) * 100.0 / SUM(special_fee.f_budget), 1) END
+      WITH SYNONYMS = ('組織損益達成率', '損益達成率')
+      COMMENT = '組織損益の予算達成率（%）'
+  )
 
-      - name: media_type
-        synonyms:
-          - 媒体種類
-          - メディア種類
-        description: 媒体の種類
-        expr: '"媒体種類名"'
-        data_type: VARCHAR
+  COMMENT = '博報堂ハンズオン用セマンティックビュー。仕入データ・組織損益データを自然言語で分析するための定義。'
 
-      - name: agency_group
-        synonyms:
-          - 代理店系列
-          - 代理店グループ
-          - 系列
-        description: 代理店系列（H:博報堂, D:大広, Y:読広）
-        expr: AGENCY_KEY
-        data_type: VARCHAR
-
-    measures:
-      - name: total_purchase
-        synonyms:
-          - 仕入高
-          - 仕入高合計
-          - 仕入
-        description: 仕入高の合計金額
-        expr: SUM("仕入高合計")
-        data_type: NUMBER
-
-      - name: total_media_revenue
-        synonyms:
-          - 媒体収益
-          - 媒体収益合計
-        description: 媒体収益の実績合計
-        expr: SUM("媒体収益合計")
-        data_type: NUMBER
-
-      - name: total_media_budget
-        synonyms:
-          - 媒体収益予算
-          - 予算
-        description: 媒体収益の予算合計
-        expr: SUM("媒体収益予算合計")
-        data_type: NUMBER
-
-      - name: budget_achievement_rate
-        synonyms:
-          - 予実達成率
-          - 達成率
-        description: 媒体収益の予算達成率（%）
-        expr: >
-          CASE WHEN SUM("媒体収益予算合計") = 0 THEN NULL
-          ELSE ROUND(SUM("媒体収益合計") * 100.0 / SUM("媒体収益予算合計"), 1)
-          END
-        data_type: NUMBER
-
-      - name: total_deals
-        synonyms:
-          - 取引件数
-          - 件数
-        description: 取引の件数
-        expr: SUM("取引件数")
-        data_type: NUMBER
-
-      - name: total_fc_revenue
-        synonyms:
-          - FC営収
-          - FC営業収入
-        description: FC営業収入の合計
-        expr: SUM("FC営収合計")
-        data_type: NUMBER
-
-      - name: total_staff_cost
-        synonyms:
-          - スタッフコスト
-          - 人件費
-        description: スタッフコストの合計
-        expr: SUM("スタッフコスト合計")
-        data_type: NUMBER
-
-  - name: special_fee_summary
-    description: >
-      組織損益の集計テーブル。会社・部門別の予算と実績を管理項目ごとに
-      集計したデータ。予実差異と達成率を含む。
-    base_table:
-      database: HAKUHODO_HANDSON_DB
-      schema: ANALYTICS
-      table: DT_SPECIAL_FEE_SUMMARY
-
-    dimensions:
-      - name: fiscal_year
-        synonyms:
-          - 年度
-        description: 会計年度
-        expr: '"年度"'
-        data_type: NUMBER
-
-      - name: year_month
-        synonyms:
-          - 年月
-        description: 年月（YYYYMM形式）
-        expr: '"年月"'
-        data_type: NUMBER
-
-      - name: quarter
-        synonyms:
-          - 四半期
-        description: 四半期
-        expr: '"四半期"'
-        data_type: VARCHAR
-
-      - name: company
-        synonyms:
-          - 会社
-        description: 会社名
-        expr: '"会社"'
-        data_type: VARCHAR
-
-      - name: department_group
-        synonyms:
-          - 部門グループ
-          - 部門G
-        description: 部門グループ
-        expr: '"部門G"'
-        data_type: VARCHAR
-
-      - name: department
-        synonyms:
-          - 部門
-        description: 部門名
-        expr: '"部門"'
-        data_type: VARCHAR
-
-      - name: management_item
-        synonyms:
-          - 管理項目
-          - 項目
-        description: 管理項目名称
-        expr: '"管理項目名称"'
-        data_type: VARCHAR
-
-    measures:
-      - name: total_actual
-        synonyms:
-          - 実績
-          - 実績合計
-        description: 実績の合計金額
-        expr: SUM("実績合計")
-        data_type: NUMBER
-
-      - name: total_budget
-        synonyms:
-          - 予算
-          - 予算合計
-        description: 予算の合計金額
-        expr: SUM("予算合計")
-        data_type: NUMBER
-
-      - name: budget_variance
-        synonyms:
-          - 予実差異
-          - 差異
-        description: 実績 - 予算の差異
-        expr: SUM("予実差異")
-        data_type: NUMBER
-
-      - name: budget_achievement_rate
-        synonyms:
-          - 予実達成率
-          - 達成率
-        description: 予算達成率（%）
-        expr: >
-          CASE WHEN SUM("予算合計") = 0 THEN NULL
-          ELSE ROUND(SUM("実績合計") * 100.0 / SUM("予算合計"), 1)
-          END
-        data_type: NUMBER
-
-verified_queries:
-
-  - name: purchase_by_media_type
-    question: 媒体種類別の仕入高を教えてください
-    verified_at: 1712000000
-    verified_by: handson_admin
-    sql: >
-      SELECT "媒体種類名", SUM("仕入高合計") AS "仕入高合計"
-      FROM HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
-      WHERE "媒体種類名" IS NOT NULL
-      GROUP BY "媒体種類名"
-      ORDER BY "仕入高合計" DESC
-
-  - name: budget_achievement_by_dept
-    question: 部門別の予算達成率を教えてください
-    verified_at: 1712000000
-    verified_by: handson_admin
-    sql: >
-      SELECT "部門", SUM("実績合計") AS "実績",
-             SUM("予算合計") AS "予算",
-             CASE WHEN SUM("予算合計") = 0 THEN NULL
-             ELSE ROUND(SUM("実績合計") * 100.0 / SUM("予算合計"), 1)
-             END AS "達成率"
-      FROM HAKUHODO_HANDSON_DB.ANALYTICS.DT_SPECIAL_FEE_SUMMARY
-      GROUP BY "部門"
-      ORDER BY "達成率" DESC
-
-  - name: quarterly_purchase_trend
-    question: 四半期ごとの仕入高推移を教えてください
-    verified_at: 1712000000
-    verified_by: handson_admin
-    sql: >
-      SELECT "四半期_4月起点", SUM("仕入高合計") AS "仕入高合計",
-             SUM("媒体収益合計") AS "媒体収益合計"
-      FROM HAKUHODO_HANDSON_DB.ANALYTICS.DT_PURCHASE_MONTHLY_SUMMARY
-      GROUP BY "四半期_4月起点"
-      ORDER BY "四半期_4月起点"
-*/
+  AI_SQL_GENERATION 'データ期間は2023年4月〜2025年4月（年度は4月起点）。代理店系列のAGENCY_KEYはH=博報堂、D=大広、Y=読広を意味する。金額は円単位で格納されている。purchaseテーブルとspecial_feeテーブルは独立しており結合しない。';
 
 -- ============================================================================
--- Step 5-3: YAML ファイルのアップロード
+-- Step 5-2: セマンティックビューの確認
 -- ============================================================================
--- ローカルに保存した YAML をステージにアップロードします。
--- ★ 以下のコマンドはローカル環境で実行してください（SnowSQL等）:
---
--- PUT file:///path/to/hakuhodo_semantic_model.yaml
---     @HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE
---     AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
 
--- アップロードされたことを確認
-LIST @HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE;
+-- 作成されたことを確認
+SHOW SEMANTIC VIEWS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
+
+-- ディメンション一覧の確認
+SHOW SEMANTIC DIMENSIONS IN SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW;
+
+-- メトリクス一覧の確認
+SHOW SEMANTIC METRICS IN SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW;
+
+-- ファクト一覧の確認
+SHOW SEMANTIC FACTS IN SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW;
 
 -- ============================================================================
--- Step 5-4: Snowflake Intelligence の作成
+-- Step 5-3: セマンティックビューを使ったクエリ（動作確認）
+-- ============================================================================
+-- ★ SEMANTIC_VIEW() 関数を使って、セマンティックビューからデータを取得します。
+--   通常の SELECT と異なり、METRICS と DIMENSIONS を指定するだけで
+--   適切な集計が行われます。
+
+-- 例1: 年度別の仕入高と媒体収益
+SELECT * FROM SEMANTIC_VIEW(
+  HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW
+  METRICS purchase.total_purchase, purchase.total_media_revenue
+  DIMENSIONS purchase.dim_fiscal_year
+) ORDER BY dim_fiscal_year;
+
+-- 例2: 媒体種類別の仕入高ランキング
+SELECT * FROM SEMANTIC_VIEW(
+  HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW
+  METRICS purchase.total_purchase, purchase.revenue_rate
+  DIMENSIONS purchase.dim_media_type
+) ORDER BY total_purchase DESC;
+
+-- 例3: 組織損益 — 会社別の予実達成率
+SELECT * FROM SEMANTIC_VIEW(
+  HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW
+  METRICS special_fee.total_actual, special_fee.total_budget, special_fee.fee_achievement_rate
+  DIMENSIONS special_fee.dim_company
+) ORDER BY fee_achievement_rate DESC;
+
+-- ============================================================================
+-- Step 5-4: Snowflake Intelligence の作成（Snowsight GUI）
 -- ============================================================================
 -- ★ Snowsight での作成手順:
 --
 --   1. Snowsight にログイン
---   2. 左メニュー「AI & ML」→「Snowflake Intelligence」を選択
---   3. 「+ Intelligence」をクリック
+--   2. 左メニュー「AI & ML」→「Cortex Analyst」を選択
+--   3. 「+ Cortex Analyst」をクリック
 --   4. 以下を設定:
---      - 名前: HAKUHODO_INTELLIGENCE
---      - Warehouse: HAKUHODO_HANDSON_WH
---      - Semantic Model:
---        ステージ上のYAMLファイルを指定
---        @HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE/hakuhodo_semantic_model.yaml
+--      - Semantic View を選択:
+--        HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW
 --   5. 「Create」をクリック
 --
--- ★ SQLでの作成（プレビュー機能）:
-
-CREATE OR REPLACE CORTEX ANALYST HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
-    SEMANTIC_MODEL = '@HAKUHODO_HANDSON_DB.ANALYTICS.SEMANTIC_MODEL_STAGE/hakuhodo_semantic_model.yaml'
-    COMMENT = '博報堂ハンズオン用 Snowflake Intelligence';
+-- ★ セマンティックビューを使用する場合、YAML アップロードは不要です。
+--   GUI から直接セマンティックビューを選択するだけで設定完了です。
+-- ============================================================================
 
 -- ============================================================================
 -- Step 5-5: Snowflake Intelligence の動作確認
 -- ============================================================================
--- ★ Snowsight で Intelligence を開き、以下の質問を試してみましょう:
+-- ★ Cortex Analyst を開き、以下の質問を試してみましょう:
 --
 -- 質問例1: 「媒体種類別の仕入高を教えて」
---   → Verified Query にマッチし、正確な結果が返ります
+--   → セマンティックビューの METRICS/DIMENSIONS 定義をもとに
+--     SQL が自動生成されます
 --
--- 質問例2: 「2025年度の予算達成率が最も低い部門は？」
---   → Semantic Model の定義をもとに SQL が自動生成されます
+-- 質問例2: 「2024年度の予算達成率が最も低い部門は？」
+--   → special_fee テーブルの fee_achievement_rate メトリクスが使われます
 --
 -- 質問例3: 「四半期ごとの仕入高推移をグラフで見せて」
 --   → チャート形式で結果が表示されます
 --
 -- 質問例4: 「博報堂系列の媒体収益はいくら？」
---   → AGENCY_KEY = 'H' でフィルタした結果が返ります
+--   → AGENCY_KEY = 'H' でフィルタされます
+--     （synonyms で '代理店系列' と定義済みのため認識可能）
 --
--- 質問例5: 「マスメディアの中でテレビの仕入高の割合は？」
---   → マスメディア区分でフィルタ＋集計した結果が返ります
+-- 質問例5: 「収益率が最も高い業種は？」
+--   → revenue_rate メトリクス（計算式）が自動適用されます
+--
+-- ★ 上手くいかない場合のヒント:
+--   - 質問に使う用語が synonyms に定義されているか確認
+--   - DESCRIBE SEMANTIC VIEW で定義内容を確認可能
+--   - ALTER SEMANTIC VIEW で定義の追加・修正が可能
+
+-- セマンティックビューの詳細定義を確認
+DESCRIBE SEMANTIC VIEW HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW;
 
 -- ============================================================================
 -- ★ 学びのポイント:
---   - Semantic Model はビジネス用語とデータの「辞書」の役割
---   - synonyms（同義語）を定義することで、様々な言い回しに対応可能
---   - Verified Queries で「よくある質問」の正確な回答を保証できる
+--   - セマンティックビューは SQL で定義 → バージョン管理・CI/CD が容易
+--   - FACTS: 数値データ、DIMENSIONS: 分類データ、METRICS: 集計式 の3層構造
+--   - WITH SYNONYMS で「仕入高」「仕入」など様々な言い回しに対応
+--   - AI_SQL_GENERATION でドメイン知識（年度起点、代理店系列コード等）を補完
+--   - SEMANTIC_VIEW() 関数で直接クエリ可能（通常の SQL としても利用可能）
 --   - 非エンジニアでも自然言語でデータ分析を開始できる
---   - SQLの知識がなくても、ビジネスの言葉でデータにアクセス可能
 -- ============================================================================
 -- 次のステップ: 06_ai_functions.sql に進んでください
 -- ============================================================================
