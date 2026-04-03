@@ -528,41 +528,47 @@ SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
 
 CREATE OR REPLACE AGENT HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_INTELLIGENCE
   COMMENT = '博報堂DYグループ向けAIアシスタント。構造化データの分析（Cortex Analyst）と社内ナレッジ検索（Cortex Search）を統合。'
-  FROM SPECIFICATION $$
-{
-  "models": {
-    "orchestration": "claude-4-sonnet"
-  },
-  "tools": [
-    {
-      "tool_spec": {
-        "type": "cortex_analyst_text_to_sql",
-        "name": "DataAnalyst",
-        "description": "博報堂DYグループの仕入データ・組織損益データを分析します。仕入高、媒体収益、予算達成率、取引件数などの定量的な質問に対して、セマンティックビューからSQLを生成して回答します。"
-      }
-    },
-    {
-      "tool_spec": {
-        "type": "cortex_search",
-        "name": "KnowledgeSearch",
-        "description": "博報堂DYグループの社内ナレッジドキュメントを検索します。媒体仕入ガイドライン、予算管理マニュアル、デジタル広告運用基準、営業戦略、Snowflake活用ガイドなどの社内ルール・手順に関する質問に回答します。"
-      }
-    }
-  ],
-  "tool_resources": {
-    "DataAnalyst": {
-      "semantic_view": "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW"
-    },
-    "KnowledgeSearch": {
-      "search_service": "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH"
-    }
-  },
-  "instructions": {
-    "orchestration": "あなたは博報堂DYグループの社内AIアシスタント「HAKUHODO Intelligence」です。以下の2つのツールを使い分けて、ユーザーの質問に日本語で的確に回答してください。\n\n## ツールの使い分け\n- DataAnalyst: 数値データ・実績・予算・仕入高・売上・KPI等の定量的な質問に使用。例: 2024年度の仕入高は？、予算達成率が最も低い部門は？\n- KnowledgeSearch: 社内ルール・ガイドライン・手順・マニュアル等の定性的な質問に使用。例: 仕入の承認フローは？、デジタル広告のKPI基準は？",
-    "response": "常に日本語で回答してください。数値を含む回答では具体的な数字を明示し、金額は読みやすい単位（万円、億円）で表示してください。根拠となるデータソース（テーブル名またはドキュメント名）を明記してください。不明な場合は推測せず、該当するデータが見つかりませんと回答してください。"
-  }
-}
-$$;
+  FROM SPECIFICATION
+  $$
+  models:
+    orchestration: claude-4-sonnet
+
+  instructions:
+    orchestration: >
+      あなたは博報堂DYグループの社内AIアシスタント「HAKUHODO Intelligence」です。
+      以下の2つのツールを使い分けて、ユーザーの質問に日本語で的確に回答してください。
+      DataAnalyst: 数値データ・実績・予算・仕入高・売上・KPI等の定量的な質問に使用。
+      KnowledgeSearch: 社内ルール・ガイドライン・手順・マニュアル等の定性的な質問に使用。
+      両方が必要な場合は、まずDataAnalystでデータを取得し、次にKnowledgeSearchでナレッジを検索して統合的に回答してください。
+    response: >
+      常に日本語で回答してください。数値を含む回答では具体的な数字を明示し、
+      金額は読みやすい単位（万円、億円）で表示してください。
+      根拠となるデータソース（テーブル名またはドキュメント名）を明記してください。
+      不明な場合は推測せず、該当するデータが見つかりませんと回答してください。
+    sample_questions:
+      - question: "2024年度の媒体種類別の仕入高ランキングを教えて"
+      - question: "予算達成率が最も低い部門はどこ？改善のためにどんな分析をすべき？"
+      - question: "仕入の承認フローと決裁金額の基準を教えて"
+      - question: "デジタル広告のKPI体系をファネル別に整理して"
+      - question: "デジタル媒体の仕入高を調べて、運用基準に照らして評価して"
+      - question: "業種別の仕入高データから、営業強化すべき業種とその戦略を提案して"
+
+  tools:
+    - tool_spec:
+        type: "cortex_analyst_text_to_sql"
+        name: "DataAnalyst"
+        description: "博報堂DYグループの仕入データ・組織損益データを分析します。仕入高、媒体収益、予算達成率、取引件数などの定量的な質問に対して、セマンティックビューからSQLを生成して回答します。"
+    - tool_spec:
+        type: "cortex_search"
+        name: "KnowledgeSearch"
+        description: "博報堂DYグループの社内ナレッジドキュメントを検索します。媒体仕入ガイドライン、予算管理マニュアル、デジタル広告運用基準、営業戦略、Snowflake活用ガイドなどの社内ルール・手順に関する質問に回答します。"
+
+  tool_resources:
+    DataAnalyst:
+      semantic_view: "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_SEMANTIC_VIEW"
+    KnowledgeSearch:
+      search_service: "HAKUHODO_HANDSON_DB.ANALYTICS.HAKUHODO_KNOWLEDGE_SEARCH"
+  $$;
 
 -- Agent が作成されたことを確認
 SHOW AGENTS IN SCHEMA HAKUHODO_HANDSON_DB.ANALYTICS;
